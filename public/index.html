@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mapa Conceptual con Jerarquías Personalizadas</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Nunito', sans-serif;
+      background: #121212;
+      color: #fff;
+      margin: 20px;
+    }
+    h2 {
+      color: #bb86fc;
+    }
+    input, button {
+      background: #1e1e1e;
+      color: #fff;
+      border: 1px solid #444;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin: 5px;
+    }
+    table {
+      margin-top: 10px;
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #444;
+      padding: 6px;
+      text-align: left;
+    }
+    #tree-container {
+      width: 100%;
+      height: 700px;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 6px;
+      margin-top: 20px;
+      overflow: hidden;
+    }
+    .node rect {
+      fill: #bb86fc;
+      stroke: #fff;
+      stroke-width: 1.5px;
+    }
+    .node text {
+      fill: #fff;
+      font: 16px 'Nunito', sans-serif;
+      letter-spacing: 0.5px;
+      pointer-events: none;
+    }
+    .link {
+      fill: none;
+      stroke: magenta;
+      stroke-width: 1.5px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Mapa Conceptual con Jerarquías Personalizadas</h2>
+  <input type="file" id="fileInput" accept=".csv" />
+  <button onclick="loadHeaders()">Cargar CSV</button>
+
+  <div id="fields-container"></div>
+  <button id="processBtn" style="display:none;" onclick="processGraph()">Procesar Grafo</button>
+
+  <div id="tree-container">
+    <svg id="tree" width="100%" height="700">
+      <g id="viewport"></g>
+    </svg>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+    const svg = d3.select("#tree");
+    const viewport = d3.select("#viewport");
+
+    const zoom = d3.zoom()
+      .scaleExtent([0.3, 3])
+      .on("zoom", (event) => viewport.attr("transform", event.transform));
+    svg.call(zoom);
+
+    const CHAR_WIDTH = 9, LINE_HEIGHT = 20, RECT_MARGIN_H = 60, RECT_MARGIN_V = 10;
+    const MAX_CHARS_PER_LINE = 45, MIN_NODE_WIDTH = 200, MIN_NODE_HEIGHT = 40;
+
+    let rootNode = null, i = 0;
+    let csvData = null;
+
+    function splitText(text, maxChars = MAX_CHARS_PER_LINE) {
+      if (!text) return [""];
+      const regex = new RegExp(`.{1,${maxChars}}`, "g");
+      return text.match(regex) || [text];
+    }
+    function rectWidth(d) {
+      const lines = splitText(d.data.name);
+      const maxLineLength = Math.max(...lines.map(l => l.length));
+      return Math.max(MIN_NODE_WIDTH, maxLineLength * CHAR_WIDTH + RECT_MARGIN_H);
+    }
+    function rectHeight(d) {
+      const lines = splitText(d.data.name);
+      return Math.max(MIN_NODE_HEIGHT, lines.length * LINE_HEIGHT + RECT_MARGIN_V);
+    }
+    function findOrCreate(parent, name) {
+      if (!parent.children) parent.children = [];
+      let existing = parent.children.find(c => c.name === name);
+      if (!existing) {
+        existing = { name, children: [] };
+        parent.children.push(existing);
+      }
+      return existing;
+    }
+    function collapse(d) {
+      if (d.children) {
+        d._children = d.children;
+        d._children.forEach(collapse);
+        d.children = null;
+      }
+    }
+    function focusOnNode(d) {
+      const scale = 1.5;
+      svg.transition().duration(750)
+        .call(
+          zoom.transform,
+          d3.zoomIdentity
+            .translate(
+              document.getElementById("tree-container").clientWidth / 2 - d.y * scale,
+              document.getElementById("tree-container").clientHeight / 2 - d.x * scale
+            )
+            .scale(scale)
+        );
+    }
+
+    const treeLayout = d3.tree();
+    function adjustPositions(root) {
+      const HORIZONTAL_MARGIN = 160;
+      root.each(d => {
+        let offset = 0, ancestor = d.parent;
+        while (ancestor) {
+          offset += rectWidth(ancestor) + HORIZONTAL_MARGIN;
+          ancestor = ancestor.parent;
+        }
+        d.y = offset;
+      });
+    }
+    function adjustVerticalPositions(root) {
+      const VERTICAL_MARGIN = 50;
+      const levels = {};
+      root.each(d => {
+        if (!levels[d.depth]) levels[d.depth] = [];
+        levels[d.depth].push(d);
+      });
+      Object.values(levels).forEach(levelNodes => {
+        levelNodes.sort((a, b) => a.y - b.y);
+        let currentX = 0;
+        for (let i = 0; i < levelNodes.length; i++) {
+          const node = levelNodes[i];
+          if (i === 0) {
+            node.x = 0;
+            currentX = node.x + rectHeight(node) + VERTICAL_MARGIN;
+          } else {
+            if (node.x < currentX) node.x = currentX;
+            currentX = node.x + rectHeight(node) + VERTICAL_MARGIN;
+          }
+        }
+      });
+    }
+
+    function update(source) {
+      treeLayout(rootNode);
+      adjustPositions(rootNode);
+      adjustVerticalPositions(rootNode);
+
+      const links = rootNode.links();
+      const link = viewport.selectAll(".link").data(links, d => d.target.id);
+
+      link.exit().transition().duration(750).style("opacity", 0).remove();
+      const linkEnter = link.enter().append("path").attr("class", "link").style("opacity", 0);
+
+      linkEnter.merge(link)
+        .transition().duration(750).style("opacity", 1)
+        .attr("d", d => {
+          const sourceWidth = rectWidth(d.source);
+          return d3.linkHorizontal()
+            .x(n => n.y + (n === d.source ? sourceWidth : 0))
+            .y(n => n.x)(d);
+        });
+
+      const nodes = rootNode.descendants();
+      const node = viewport.selectAll(".node").data(nodes, d => d.id || (d.id = ++i));
+
+      const nodeEnter = node.enter()
+        .append("g").attr("class", "node")
+        .attr("transform", d => `translate(${source.y0 || 0},${source.x0 || 0})`)
+        .style("opacity", 0)
+        .on("click", (event, d) => {
+          if (d.children) {
+            d._children = d.children;
+            d.children = null;
+          } else if (d._children) {
+            d.children = d._children;
+            d._children = null;
+          }
+          update(d); focusOnNode(d);
+        });
+
+      nodeEnter.append("rect")
+        .attr("rx", 6).attr("ry", 6)
+        .attr("width", rectWidth).attr("height", rectHeight);
+
+      nodeEnter.each(function (d) {
+        const g = d3.select(this);
+        const lines = splitText(d.data.name);
+        lines.forEach((line, i) => {
+          g.append("text").attr("x", 10).attr("y", i * LINE_HEIGHT + 20).text(line);
+        });
+      });
+
+      nodeEnter.merge(node)
+        .transition().duration(750)
+        .attr("transform", d => `translate(${d.y},${d.x})`)
+        .style("opacity", 1);
+
+      node.exit().transition().duration(750)
+        .attr("transform", d => `translate(${source.y},${source.x})`)
+        .style("opacity", 0).remove();
+
+      rootNode.descendants().forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+
+      if (source === rootNode) {
+        const box = viewport.node().getBBox();
+        const containerWidth = document.getElementById("tree-container").clientWidth;
+        const containerHeight = document.getElementById("tree-container").clientHeight;
+        const scale = Math.min(containerWidth / box.width, containerHeight / box.height, 1.5);
+        const translateX = (containerWidth - box.width * scale) / 2 - box.x * scale;
+        const translateY = 20;
+        svg.transition().duration(750)
+          .call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
+      }
+    }
+
+    function loadHeaders() {
+      const input = document.getElementById("fileInput");
+      if (!input.files.length) { alert("Seleccione un archivo CSV"); return; }
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const text = e.target.result;
+        csvData = d3.csvParse(text);
+        const headers = csvData.columns;
+
+        let html = "<h3>Asigne jerarquía a cada campo:</h3><table><tr><th>Campo</th><th>Jerarquía</th></tr>";
+        headers.forEach((h, idx) => {
+          html += `<tr><td>${h}</td><td><input type="number" id="field_${idx}" value="${idx + 1}" style="width:60px"></td></tr>`;
+        });
+        html += "</table>";
+        document.getElementById("fields-container").innerHTML = html;
+        document.getElementById("processBtn").style.display = "inline-block";
+      };
+      reader.readAsText(input.files[0]);
+    }
+
+    function processGraph() {
+      if (!csvData) return;
+      const headers = csvData.columns;
+      const hierarchy = headers.map((h, idx) => ({
+        name: h,
+        level: parseInt(document.getElementById(`field_${idx}`).value)
+      }));
+      hierarchy.sort((a, b) => a.level - b.level);
+
+      const orderedFields = hierarchy.map(h => h.name);
+      const treeData = { name: "Root", children: [] };
+
+      csvData.forEach(row => {
+        let currentNode = treeData;
+        let currentLevel = -1;
+        orderedFields.forEach(field => {
+          const value = row[field]?.trim() || `Sin ${field}`;
+          if (!currentNode.children) currentNode.children = [];
+          let existing = currentNode.children.find(c => c.name === value);
+          if (!existing) {
+            existing = { name: value, children: [] };
+            currentNode.children.push(existing);
+          }
+          currentNode = existing;
+        });
+      });
+
+      rootNode = d3.hierarchy(treeData);
+      rootNode.x0 = 0; rootNode.y0 = 0;
+      rootNode.children.forEach(collapse);
+      update(rootNode);
+    }
+  </script>
+</body>
+</html>
