@@ -115,6 +115,7 @@
         d.children = null;
       }
     }
+
     function focusOnNode(d) {
       const scale = 1.5;
       svg.transition().duration(750)
@@ -129,9 +130,34 @@
         );
     }
 
+    function focusOnChildren(d) {
+      const visibleChildren = (d.children || []).filter(c => c);
+      if (!visibleChildren.length) {
+        focusOnNode(d);
+        return;
+      }
+
+      const minX = Math.min(...visibleChildren.map(c => c.x));
+      const maxX = Math.max(...visibleChildren.map(c => c.x + rectHeight(c)));
+      const minY = Math.min(...visibleChildren.map(c => c.y));
+      const maxY = Math.max(...visibleChildren.map(c => c.y + rectWidth(c)));
+
+      const containerWidth = document.getElementById("tree-container").clientWidth;
+      const containerHeight = document.getElementById("tree-container").clientHeight;
+      const boxWidth = maxY - minY;
+      const boxHeight = maxX - minX;
+      const scale = Math.min(containerWidth / (boxWidth + 100), containerHeight / (boxHeight + 100), 1.5);
+
+      const translateX = (containerWidth - boxWidth * scale) / 2 - minY * scale;
+      const translateY = (containerHeight - boxHeight * scale) / 2 - minX * scale;
+
+      svg.transition().duration(750)
+        .call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
+    }
+
     const treeLayout = d3.tree();
     function adjustPositions(root) {
-      const HORIZONTAL_MARGIN = 220;
+      const HORIZONTAL_MARGIN = 160;
       root.each(d => {
         let offset = 0, ancestor = d.parent;
         while (ancestor) {
@@ -199,7 +225,8 @@
             d.children = d._children;
             d._children = null;
           }
-          update(d); focusOnNode(d);
+          update(d);
+          focusOnChildren(d);
         });
 
       nodeEnter.append("rect")
@@ -286,9 +313,7 @@
         hierarchy.forEach(h => {
           const value = row[h.name]?.trim() || `Sin ${h.name}`;
           if (!parents[h.level]) {
-            // Creamos nodo padre en su nivel
-            let parentNode = h.level === 1 ? treeData :
-              parents[h.level - 1];
+            let parentNode = h.level === 1 ? treeData : parents[h.level - 1];
             if (!parentNode.children) parentNode.children = [];
             let existing = parentNode.children.find(c => c.name === value);
             if (!existing) {
@@ -297,7 +322,6 @@
             }
             parents[h.level] = existing;
           } else {
-            // Ya existe otro campo en este mismo nivel: lo colgamos del mismo padre
             let parentNode = parents[h.level - 1];
             if (!parentNode.children) parentNode.children = [];
             let existing = parentNode.children.find(c => c.name === value);
