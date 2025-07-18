@@ -21,6 +21,7 @@
       padding: 6px 10px;
       border-radius: 6px;
       margin: 5px;
+      cursor: pointer;
     }
     table {
       margin-top: 10px;
@@ -31,6 +32,9 @@
       border: 1px solid #444;
       padding: 6px;
       text-align: left;
+    }
+    #fields-container {
+      margin-bottom: 10px;
     }
     #tree-container {
       width: 100%;
@@ -63,6 +67,7 @@
   <h2>Mapa Conceptual con Jerarquías Personalizadas</h2>
   <input type="file" id="fileInput" accept=".csv" />
   <button onclick="loadHeaders()">Cargar CSV</button>
+  <button id="togglePanel" style="display:none;" onclick="togglePanel()">Ocultar panel de jerarquías</button>
 
   <div id="fields-container"></div>
   <button id="processBtn" style="display:none;" onclick="processGraph()">Procesar Grafo</button>
@@ -102,15 +107,6 @@
     function rectHeight(d) {
       const lines = splitText(d.data.name);
       return Math.max(MIN_NODE_HEIGHT, lines.length * LINE_HEIGHT + RECT_MARGIN_V);
-    }
-    function findOrCreate(parent, name) {
-      if (!parent.children) parent.children = [];
-      let existing = parent.children.find(c => c.name === name);
-      if (!existing) {
-        existing = { name, children: [] };
-        parent.children.push(existing);
-      }
-      return existing;
     }
     function collapse(d) {
       if (d.children) {
@@ -257,8 +253,21 @@
         html += "</table>";
         document.getElementById("fields-container").innerHTML = html;
         document.getElementById("processBtn").style.display = "inline-block";
+        document.getElementById("togglePanel").style.display = "inline-block";
       };
       reader.readAsText(input.files[0]);
+    }
+
+    function togglePanel() {
+      const panel = document.getElementById("fields-container");
+      const btn = document.getElementById("togglePanel");
+      if (panel.style.display === "none") {
+        panel.style.display = "block";
+        btn.textContent = "Ocultar panel de jerarquías";
+      } else {
+        panel.style.display = "none";
+        btn.textContent = "Mostrar panel de jerarquías";
+      }
     }
 
     function processGraph() {
@@ -270,21 +279,34 @@
       }));
       hierarchy.sort((a, b) => a.level - b.level);
 
-      const orderedFields = hierarchy.map(h => h.name);
       const treeData = { name: "Root", children: [] };
 
       csvData.forEach(row => {
-        let currentNode = treeData;
-        let currentLevel = -1;
-        orderedFields.forEach(field => {
-          const value = row[field]?.trim() || `Sin ${field}`;
-          if (!currentNode.children) currentNode.children = [];
-          let existing = currentNode.children.find(c => c.name === value);
-          if (!existing) {
-            existing = { name: value, children: [] };
-            currentNode.children.push(existing);
+        const parents = {};
+        hierarchy.forEach(h => {
+          const value = row[h.name]?.trim() || `Sin ${h.name}`;
+          if (!parents[h.level]) {
+            // Creamos nodo padre en su nivel
+            let parentNode = h.level === 1 ? treeData :
+              parents[h.level - 1];
+            if (!parentNode.children) parentNode.children = [];
+            let existing = parentNode.children.find(c => c.name === value);
+            if (!existing) {
+              existing = { name: value, children: [] };
+              parentNode.children.push(existing);
+            }
+            parents[h.level] = existing;
+          } else {
+            // Ya existe otro campo en este mismo nivel: lo colgamos del mismo padre
+            let parentNode = parents[h.level - 1];
+            if (!parentNode.children) parentNode.children = [];
+            let existing = parentNode.children.find(c => c.name === value);
+            if (!existing) {
+              existing = { name: value, children: [] };
+              parentNode.children.push(existing);
+            }
+            parents[h.level] = existing;
           }
-          currentNode = existing;
         });
       });
 
